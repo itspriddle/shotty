@@ -1,0 +1,530 @@
+#!/usr/bin/ruby --disable=gems
+# Usage: shotty [COMMAND] [ARGS]
+#
+# COMMANDS
+#   shotty authorize
+#     Connects to dropbox.com to authorize shotty for use with your account.
+#
+#   shotty config [key]
+#     Shows configuration information. If a key is supplied, shows just that
+#     configuration value. Otherwise shows all configuration values.
+#
+#   shotty config-file
+#     Shows the path to the shotty configuration file.
+#
+#   shotty create-url <file>
+#     Creates a Dropbox URL for the specifed file. This should be used with
+#     files that have never had a shared link generated. Otherwise it will
+#     fail.
+#
+#   shotty dropbox-status
+#     Checks the status of Dropbox.app. If it is running, outputs "on" and
+#     exits 0. If it is not running, outputs "off" and exits 1.
+#
+#   shotty get-url <file>
+#     Gets an existing Dropbox shared link for the specified file.
+#
+#   shotty mv <file>
+#     Moves a file to the shotty screenshot directory.
+#
+#   shotty mv-last-screenshot
+#     If a screenshot was created on the Desktop within the last 30 seconds,
+#     moves it to the screenshot directory. Outputs the Dropbox URL and
+#     optionally copies it to the clipboard. This command is used by the
+#     shotty launchd.plist.
+#
+#   shotty plist
+#     Generates XML used for shotty's launchd plist. The plist is used to
+#     configure `launchd` to watch for screenshots to be automatically moved.
+#
+#   shotty plist-file
+#     Shows the path to the shotty launchd plist file.
+#
+#   shotty url <file>
+#     Gets or creates a Dropbox shared link for the given file. This is
+#     useful when it is not known ahead of time whether a file already has a
+#     shared link.
+#
+#   shotty version, shotty -v, shotty --version
+#     Show shotty version.
+#
+#   shotty help, shotty -h, shotty --help
+#     Show this help text.
+#
+#
+# CONFIGURATION
+#   shotty configuration is stored in a JSON file at `~/.config/shotty.json`.
+#   The following options are available:
+#
+#     token - REQUIRED
+#       Dropbox API OAuth2 access token.
+#
+#     screenshot_directory - OPTIONAL
+#       Directory to store screenshots in, by default `~/Dropbox/Shotty`. This
+#       must be a subdirectory of `~/Dropbox`.
+#
+#   Full example configuration file:
+#
+#     {
+#       "token":                "TOKEN",
+#       "screenshot_directory": "/Users/priddle/Dropbox/Shotty"
+#     }
+#
+#
+# EXAMPLES
+#   shotty url ~/Dropbox/SomeFile.png | open
+#     Open the Dropbox URL for a file in the default web browser.
+#
+#   shotty mv ~/Test.png
+#     Moves an arbitrary file.
+#
+#   shotty plist > $(shotty plist-file)
+#     Install shotty plist.
+#
+#   open $(shotty config screenshot_directory)
+#     Open the shotty screenshot directory in Finder.
+#
+#   vim $(shotty config-file)
+#     Edit the shotty config file in Vim
+#
+#   shotty dropbox-status || open Dropbox
+#     Launch Dropbox.app if it is not running.
+#
+# SEE ALSO
+#   launchd(8), launchd.plist(5), launchctl(1)
+
+autoload :JSON,       "json"
+autoload :FileUtils,  "fileutils"
+autoload :Shellwords, "shellwords"
+autoload :Tempfile,   "tempfile"
+
+class String
+  def strip_heredoc
+    gsub(/^[ \t]{#{(scan(/^[ \t]*(?=\S)/).min || "").size}}/, '')
+  end
+end
+
+module Shotty
+  extend self
+
+  # shotty version.
+  #
+  # Returns a String.
+  VERSION = "0.0.1"
+
+  # URL used to obtain an OAuth token from Dropbox.
+  #
+  # Returns a String.
+  AUTHORIZATION_URL = "https://shotty.herokuapp.com/authorize"
+
+  # Identifier used for the shotty launchd.plist.
+  #
+  # Returns a String.
+  LAUNCHD_IDENTIFIER = "net.nevercraft.shotty"
+
+  # File used for the shotty launchd.plist.
+  #
+  # Returns a String.
+  LAUNCHD_PLIST = File.expand_path("~/Library/LaunchAgents/#{LAUNCHD_IDENTIFIER}.plist")
+
+  # JSON file used for shotty configuration.
+  #
+  # Returns a String.
+  CONFIG_FILE = File.expand_path("~/.config/shotty.json")
+
+  # Path to the Desktop (where screenshots are created).
+  #
+  # Returns a String.
+  DESKTOP = File.expand_path("~/Desktop")
+
+  # Path to Dropbox.
+  #
+  # Returns a String.
+  DROPBOX = File.expand_path("~/Dropbox")
+
+  # Raised when a file exists on disk but Dropbox does not know about it.
+  class NotFound < StandardError; end
+
+  # Gets a direct Dropbox link for the given file. If Dropbox determines the
+  # file does not exist yet, retries the specified number of times.
+  #
+  # file    - String file
+  # method  - API method, `:create`, or `:find`
+  # retries - Number of retries to attempt
+  #
+  # Aborts if the URL cannot be found.
+  #
+  # Returns a String.
+  def url(file, method: nil, retries: 0)
+    file = dropbox_resolve_file(file)
+
+    begin
+      if method
+        url = send(:"dropbox_#{method}_shared_link", file)
+      else
+        url = dropbox_find_shared_link(file) || dropbox_create_shared_link(file)
+      end
+
+      if url
+        url.sub "www.dropbox.com", "dl.dropboxusercontent.com"
+      else
+        abort "Couldn't find URL for #{file}"
+      end
+    rescue NotFound
+      if dropbox_running? && retries > 0
+        log { "Trying again" }
+
+        sleep 1
+
+        retry if (retries -= 1) > 0
+      else
+        abort "Dropbox can't find #{file}, is it still syncing?"
+      end
+    end
+  end
+
+  # Moves the given file into the shotty screenshot directory. The destination
+  # file will be placed in a subdirectory named after the year/month and have
+  # a 24-hour timestamp, eg:
+  #
+  #   "~/Dropbox/Shotty/2017-02/Screenshot 2017-02-18 12.42.49.png"
+  #
+  # file - String file
+  #
+  # Aborts if the file could not be moved.
+  #
+  # Returns a String.
+  def mv(file)
+    abort "#{file} does not exist" unless File.exist? file
+
+    now          = Time.now
+    subdirectory = now.strftime("%Y-%m")
+    timestamp    = now.strftime("%F %H.%M.%S")
+    new_file     = "Screenshot #{timestamp}.#{File.extname(file).slice(1..-1)}"
+    new_path     = File.join(config["screenshot_directory"], subdirectory, new_file)
+    new_dir      = File.dirname(new_path)
+
+    FileUtils.mkdir_p(new_dir) or abort "Couldn't create #{new_dir}"
+    FileUtils.mv(file, new_path) or abort "Coudln't move #{file} to #{new_path}"
+
+    new_path
+  end
+
+  # Generates a launchd.plist to run `shotty mv-last-screenshot` any time a
+  # new screenshot is saved to the Desktop.
+  #
+  # Returns a String.
+  def plist
+    <<-PLIST.strip_heredoc
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+        <dict>
+          <key>Label</key>
+          <string>#{LAUNCHD_IDENTIFIER}</string>
+          <key>WatchPaths</key>
+          <array>
+            <string>#{DESKTOP}</string>
+          </array>
+          <key>ExitTimeOut</key>
+          <integer>0</integer>
+          <key>ThrottleInterval</key>
+          <integer>1</integer>
+          <key>EnvironmentVariables</key>
+          <dict>
+            <key>PATH</key>
+            <string>/usr/local/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin</string>
+          </dict>
+          <key>ProgramArguments</key>
+          <array>
+            <string>#{File.expand_path(__FILE__)}</string>
+            <string>mv-last-screenshot</string>
+          </array>
+        </dict>
+      </plist>
+    PLIST
+  end
+
+  # Prints help text for this script.
+  #
+  # command - Base command
+  #
+  # Returns nothing.
+  def help(header: nil, valid: nil)
+    puts header if header
+
+    File.read(__FILE__).lines[1..-1].each do |line|
+      if line =~ /\A#/
+        puts line[2..-1]
+      else
+        break
+      end
+    end
+
+    exit valid
+  end
+
+  # Internal: shotty configuration.
+  #
+  # Returns a Hash.
+  def config
+    @config ||= JSON.parse(File.read(CONFIG_FILE)).tap do |hash|
+      hash.fetch("token") # Fail if no API token found
+
+      hash["screenshot_directory"] ||= "#{Shotty::DROPBOX}/Shotty"
+
+      unless hash["screenshot_directory"].match Regexp.escape(Shotty::DROPBOX)
+        abort "#{CONFIG_FILE} specifies an invalid screenshot_directory.\n\n" \
+          "#{hash["screenshot_directory"]} must be a subdirectory of #{Shotty::DROPBOX}"
+      end
+    end
+  rescue Errno::ENOENT
+    abort "#{CONFIG_FILE} does not exist"
+  rescue Errno::EACCES
+    abort "#{CONFIG_FILE} can't be read"
+  rescue JSON::ParserError
+    abort "#{CONFIG_FILE} is not valid JSON"
+  rescue KeyError => e
+    key = e.message.sub(/\Akey not found: /, "")
+
+    abort "#{CONFIG_FILE} is missing required key, #{key}"
+  end
+
+  # Internal: Send a POST request to the given Dropbox API URL.
+  #
+  # url     - Full API URL
+  # headers - Hash of request headers (optional)
+  # payload - Hash/String payload (required)
+  #
+  # Returns a Net::HTTPResponse or the result of a block if one is supplied.
+  def dropbox_post(url, headers: {}, payload: nil)
+    raise ArgumentError unless payload
+
+    require "net/https"
+    require "uri"
+
+    headers = {
+      "Authorization" => "Bearer #{config["token"]}",
+      "Content-Type"  => "application/json"
+    }.merge(headers)
+
+    uri          = URI.parse(url)
+    http         = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = uri.scheme == "https"
+
+    http.post(uri.path, payload.to_json, headers).tap do |response|
+      log { "POST #{url} - #{payload.to_json}" }
+      log { "  --> #{response.body}" }
+
+      return yield response if block_given?
+    end
+  end
+
+  # Internal: Send a POST request to the given Dropbox API URL.
+  #
+  # url     - Full API URL
+  # headers - Hash of request headers (optional)
+  # payload - Hash/String payload (required)
+  #
+  # Returns a Hash or the result of a block if one is supplied.
+  def dropbox_post_json(url, headers: {}, payload: nil)
+    raise ArgumentError unless payload
+
+    dropbox_post(url, headers: headers, payload: payload) do |response|
+      JSON.parse(response.body).tap do |json|
+        if json["error_summary"] =~ /not_found/
+          raise NotFound
+        elsif json["error"]
+          log { "  ERROR" }
+          abort "API error"
+        else
+          log { "  SUCCESS" }
+        end
+
+        return yield json if block_given?
+      end
+    end
+  end
+
+  # Internal: Finds a Dropbox shared link for the given file.
+  #
+  # file - Resolved file
+  #
+  # Returns a String or nil.
+  def dropbox_find_shared_link(file)
+    url     = "https://api.dropboxapi.com/2/sharing/list_shared_links"
+    payload = { path: file, direct_only: true }
+
+    dropbox_post_json(url, payload: payload) do |json|
+      if link = Array(json["links"]).first
+        link["url"]
+      end
+    end
+  end
+
+  # Internal: Creates a Dropbox shared link for the given file.
+  #
+  # file - Resolved file
+  #
+  # Returns a String or nil.
+  def dropbox_create_shared_link(file)
+    url     = "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings"
+    payload = { path: file, settings: { requested_visibility: "public" } }
+
+    dropbox_post_json(url, payload: payload) do |json|
+      json["url"]
+    end
+  end
+
+  # Internal: Resolves the path used for API requests for the given file.
+  #
+  # file - Path to file
+  #
+  # The API expects files where the Dropbox directory is the root.
+  #
+  #   ~/Dropbox/Hi.png          - /Hi.png
+  #   ~/Dropbox/Apps/Foo/Hi.png - /Apps/Foo/Hi.png
+  #
+  # Aborts if:
+  #   - the file does not exist
+  #   - the file is a directory
+  #   - the file is not under `~/Dropbox`
+  #
+  # Returns a String.
+  def dropbox_resolve_file(file)
+    file = File.expand_path(file)
+
+    abort "#{file} does not exist" unless File.exist? file
+
+    file = File.realpath(file)
+
+    abort "#{file} is a directory" if File.directory? file
+
+    regex = Regexp.escape(Shotty::DROPBOX)
+
+    abort "#{file} is not under #{Shotty::DROPBOX}" unless file.match(regex)
+
+    file.sub(/\A#{regex}/, "")
+  end
+
+  # Internal: Check if Dropbox.app is running.
+  #
+  # Returns a boolean.
+  def dropbox_running?
+    `pgrep Dropbox` && $?.exitstatus.zero?
+  end
+
+  # Internal: Finds a newly created screenshot on the Desktop.
+  #
+  # Aborts if no screenshot is found.
+  #
+  # Returns a String.
+  def last_screenshot
+    pattern = "#{DESKTOP}/Screen Shot*.png"
+
+    file = Dir[pattern].max_by { |file| File.ctime(file) }
+
+    if file && ((Time.now - File.ctime(file)) < 30)
+      file
+    else
+      abort "No screenshot found"
+    end
+  end
+
+  # Internal: Uses `terminal-notifier` if available to show a Notification
+  # Center alert.
+  #
+  # url - String URL
+  #
+  # Returns nothing.
+  def notify(url)
+    return if `which terminal-notifier`.chomp == ""
+
+    command = <<-CMD.strip_heredoc
+      terminal-notifier \
+        -title "Copied Public Link to Clipboard" \
+        -message "Click to view: #{url}" \
+        -open "#{url}" \
+        -actions "" \
+        -sender com.getdropbox.dropbox
+    CMD
+
+    `#{command}`
+  end
+
+  # Internal: Copies the given string to the clipboard using `pbcopy`.
+  #
+  # str - String
+  #
+  # Returns nothing.
+  def copy(str)
+    IO.popen("pbcopy", "w") { |f| f << str.chomp }
+  end
+
+  # Internal: Logs given block to STDERR if debug mode is enabled.
+  #
+  # Returns nothing.
+  def log
+    STDERR.puts "DEBUG: #{yield}" if ENV["DEBUG"] == "1"
+  end
+end
+
+# Away we go!
+if $0 == __FILE__
+  case command = ARGV.shift
+  when "authorize"
+    exec "open #{Shotty::AUTHORIZATION_URL}"
+  when "config"
+    if key = ARGV.first
+      val = Shotty.config[key] or abort "Config '#{key}' not found"
+
+      puts val
+    else
+      jj Shotty.config
+    end
+  when "config-file"
+    puts Shotty::CONFIG_FILE
+  when "create-url", "get-url", "url"
+    method  = :create if command == "create-url"
+    method  = :find   if command == "get-url"
+    retries = method == :find ? 0 : 3
+    file    = ARGV.shift or abort "No file specified"
+
+    puts Shotty.url(file, method: method, retries: retries)
+  when "dropbox-status"
+    puts (running = Shotty.dropbox_running?) ? "on" : "off"
+
+    exit running
+  when "mv"
+    file = ARGV.shift or abort "No file specified"
+
+    puts Shotty.mv(file)
+  when "mv-last-screenshot"
+    abort "Dropbox is not running" unless Shotty.dropbox_running?
+
+    file     = Shotty.last_screenshot
+    new_file = Shotty.mv(file)
+
+    sleep 2 # Let Dropbox.app try uploading
+
+    url = Shotty.url(new_file, method: :create, retries: 3)
+
+    Shotty.copy(url)
+    Shotty.notify(url)
+
+    puts url
+  when "plist"
+    puts Shotty.plist
+  when "plist-file"
+    puts Shotty::LAUNCHD_PLIST
+  when "version", "-v", "--version"
+    puts "Shotty v#{Shotty::VERSION} by Joshua Priddle <jpriddle@me.com>"
+    puts "Released under the MIT license."
+  else
+    unless command.nil? || %w(help -h --help).include?(command)
+      header = "Invalid command #{command.inspect}"
+    end
+
+    Shotty.help(header: header, valid: header.nil?)
+  end
+end

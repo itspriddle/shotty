@@ -1,0 +1,9 @@
+<% if @token %>
+  Run the following command to complete shotty setup:
+
+  <pre>mkdir -p ~/.config && echo '{"token": "<%= @token %>"}' > ~/.config/shotty.json</pre>
+<% else %>
+  Error!
+
+  <pre><%= params[:error_description] %></pre>
+<% end %>
