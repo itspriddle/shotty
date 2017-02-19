@@ -1,0 +1,38 @@
+#!/usr/bin/ruby --disable=gems
+
+ENV["DEBUG"] = "1"
+
+ARGV.clear
+
+def reload!
+  Object.send(:remove_const, :Shotty) if defined? Shotty
+
+  load File.expand_path("../shotty", __FILE__)
+
+  Shotty.instance_eval do
+    def abort(message)
+      raise message
+    end
+  end
+end
+
+reload!
+
+require "irb"
+require "irb/completion"
+
+# So dirty...
+# http://stackoverflow.com/a/39778822
+IRB.singleton_class.send :prepend, Module.new {
+  def setup(ap_path)
+    super
+
+    conf[:PROMPT][:_SHOTTY] = conf[:PROMPT][:SIMPLE].dup.merge!(
+      PROMPT_I: "#{Shotty.name.downcase}> "
+    )
+
+    conf[:PROMPT_MODE] = :_SHOTTY
+  end
+}
+
+IRB.start
