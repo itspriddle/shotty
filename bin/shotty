@@ -446,6 +446,7 @@ module Shotty
         -message "Click to view: #{url}" \
         -open "#{url}" \
         -actions "" \
+        -timeout 3 \
         -sender com.getdropbox.dropbox
     CMD
 
