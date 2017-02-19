@@ -142,8 +142,11 @@ module Shotty
   # Returns a String.
   DROPBOX = File.realpath(File.expand_path("~/Dropbox"))
 
+  # Raised when the Dropbox API returns an error.
+  class APIError < StandardError; end
+
   # Raised when a file exists on disk but Dropbox does not know about it.
-  class NotFound < StandardError; end
+  class NotFoundError < APIError; end
 
   # Gets a direct Dropbox link for the given file. If Dropbox determines the
   # file does not exist yet, retries the specified number of times.
@@ -170,16 +173,16 @@ module Shotty
       else
         abort "Couldn't find URL for #{file}"
       end
-    rescue NotFound
-      if dropbox_running? && retries > 0
-        log { "Trying again" }
+    rescue APIError => e
+      if e.is_a?(NotFoundError) && dropbox_running? && (retries -= 1) > 0
+        log { "Trying again after a quick nap" }
 
         sleep 1
 
-        retry if (retries -= 1) > 0
-      else
-        abort "Dropbox can't find #{file}, is it still syncing?"
+        retry
       end
+
+      abort e.message
     end
   end
 
@@ -298,7 +301,7 @@ module Shotty
   #
   # Returns a Net::HTTPResponse or the result of a block if one is supplied.
   def dropbox_post(url, headers: {}, payload: nil)
-    raise ArgumentError unless payload
+    raise ArgumentError, "missing keyword: payload" unless payload
 
     require "net/https"
     require "uri"
@@ -316,7 +319,7 @@ module Shotty
       log { "POST #{url} - #{payload.to_json}" }
       log { "  --> #{response.body}" }
 
-      return yield response if block_given?
+      return yield response
     end
   end
 
@@ -328,20 +331,30 @@ module Shotty
   #
   # Returns a Hash or the result of a block if one is supplied.
   def dropbox_post_json(url, headers: {}, payload: nil)
-    raise ArgumentError unless payload
+    raise ArgumentError, "missing keyword: payload" unless payload
 
     dropbox_post(url, headers: headers, payload: payload) do |response|
       JSON.parse(response.body).tap do |json|
-        if json["error_summary"] =~ /not_found/
-          raise NotFound
-        elsif json["error"]
-          log { "  ERROR" }
-          abort "API error"
-        else
+        unless summary = json["error_summary"]
           log { "  SUCCESS" }
+
+          return yield json
         end
 
-        return yield json if block_given?
+        log { "  ERROR (code: #{summary})" }
+
+        case summary
+        when /access_denied/
+          raise APIError, "Access to the request path is forbidden."
+        when /invalid_access_token/
+          raise APIError, "Invalid access token."
+        when /not_found/
+          raise NotFoundError, "Dropbox cannot find the specified file. Has it finished syncing?"
+        when /shared_link_already_exists/
+          raise APIError, "A shared link already exists for the specified file."
+        else
+          raise APIError, "Error (code: #{summary})"
+        end
       end
     end
   end
