@@ -28,8 +28,7 @@ in Terminal.app.
 Download the script:
 
 ```
-curl https://github.com/itspriddle/shotty/raw/master/lib/shotty.rb \
-  -O /usr/local/bin/shotty
+curl -L https://github.com/itspriddle/shotty/raw/master/bin/shotty > /usr/local/bin/shotty
 ```
 
 Make it executable:
