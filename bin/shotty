@@ -140,7 +140,7 @@ module Shotty
   # Path to Dropbox.
   #
   # Returns a String.
-  DROPBOX = File.expand_path("~/Dropbox")
+  DROPBOX = File.realpath(File.expand_path("~/Dropbox"))
 
   # Raised when a file exists on disk but Dropbox does not know about it.
   class NotFound < StandardError; end
