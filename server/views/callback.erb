@@ -1,9 +1,17 @@
-<% if @token %>
-  Run the following command to complete shotty setup:
+<div class="dialog">
+  <div>
+    <h1>shotty authorization <%= @token ? "complete" : "error" %></h1>
+  </div>
 
-  <pre>mkdir -p ~/.config && echo '{"token": "<%= @token %>"}' > ~/.config/shotty.json</pre>
-<% else %>
-  Error!
-
-  <pre><%= params[:error_description] %></pre>
-<% end %>
+  <% if @token %>
+    <p>
+      Run the following command to complete shotty setup:<br><br>
+      <code>mkdir -p ~/.config && echo '{"token": "<%= @token %>"}' > ~/.config/shotty.json</code>
+    </p>
+  <% else %>
+    <p>
+      Error!<br><br>
+      <code><%= params[:error_description] %></code>
+    </p>
+  <% end %>
+</div>
