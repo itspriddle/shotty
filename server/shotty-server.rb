@@ -65,7 +65,7 @@ def get_token(code)
 end
 
 get "/" do
-  erb :index
+  erb :index, layout: :layout
 end
 
 get "/robots.txt" do
@@ -84,5 +84,5 @@ get "/callback" do
 
   @token = get_token(params[:code])
 
-  erb :callback
+  erb :callback, layout: :layout
 end
