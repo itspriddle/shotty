@@ -177,7 +177,7 @@ module Shotty
       if e.is_a?(NotFoundError) && dropbox_running? && (retries -= 1) > 0
         log { "Trying again after a quick nap" }
 
-        sleep 1
+        sleep 2
 
         retry
       end
@@ -521,7 +521,7 @@ if $0 == __FILE__
 
     sleep 2 # Let Dropbox.app try uploading
 
-    url = Shotty.url(new_file, method: :create, retries: 3)
+    url = Shotty.url(new_file, method: :create, retries: 5)
 
     Shotty.copy(url)
     Shotty.notify(url)
