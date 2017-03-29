@@ -169,7 +169,8 @@ module Shotty
       end
 
       if url
-        url.sub "www.dropbox.com", "dl.dropboxusercontent.com"
+        url.sub! "www.dropbox.com", "dl.dropboxusercontent.com"
+        url.sub! /\?.*\z/, ""
       else
         abort "Couldn't find URL for #{file}"
       end
