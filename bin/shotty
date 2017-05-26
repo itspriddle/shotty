@@ -148,17 +148,15 @@ module Shotty
   # Raised when a file exists on disk but Dropbox does not know about it.
   class NotFoundError < APIError; end
 
-  # Gets a direct Dropbox link for the given file. If Dropbox determines the
-  # file does not exist yet, retries the specified number of times.
+  # Gets a direct Dropbox link for the given file.
   #
-  # file    - String file
-  # method  - API method, `:create`, or `:find`
-  # retries - Number of retries to attempt
+  # file   - String file
+  # method - API method, `:create`, or `:find`
   #
   # Aborts if the URL cannot be found.
   #
   # Returns a String.
-  def url(file, method: nil, retries: 0)
+  def url(file, method: nil)
     file = dropbox_resolve_file(file)
 
     begin
@@ -175,14 +173,6 @@ module Shotty
         abort "Couldn't find URL for #{file}"
       end
     rescue APIError => e
-      if e.is_a?(NotFoundError) && dropbox_running? && (retries -= 1) > 0
-        log { "Trying again after a quick nap" }
-
-        sleep 2
-
-        retry
-      end
-
       abort e.message
     end
   end
@@ -201,17 +191,65 @@ module Shotty
   def mv(file)
     abort "#{file} does not exist" unless File.exist? file
 
-    now          = Time.now
-    subdirectory = now.strftime("%Y-%m")
-    timestamp    = now.strftime("%F %H.%M.%S")
-    new_file     = "Screenshot #{timestamp}.#{File.extname(file).slice(1..-1)}"
-    new_path     = File.join(config["screenshot_directory"], subdirectory, new_file)
-    new_dir      = File.dirname(new_path)
+    new_path = generate_new_filename(file)
+    new_dir  = File.dirname(new_path)
 
     FileUtils.mkdir_p(new_dir) or abort "Couldn't create #{new_dir}"
     FileUtils.mv(file, new_path) or abort "Coudln't move #{file} to #{new_path}"
 
     new_path
+  end
+
+  # Creates a blank version of the given file in the shotty screenshot
+  # directory directly via the Dropbox API. Doing this instead of just letting
+  # Dropbox.app upload the file has some benefits:
+  #
+  #   - we don't have to create parent directories locally, the Dropbox client
+  #     will do it automatically
+  #   - we can get a URL faster than waiting for the full file to upload
+  #
+  # file - String file
+  #
+  # Returns a String.
+  def touch(file)
+    file = dropbox_resolve_file(file, validate_presence: false)
+
+    # TODO: Create parent directories, otherwise we get a notification if
+    # they're created :(
+    dropbox_touch_file(file)
+  end
+
+  # Moves the last screenshot into the shotty screenshot directory and copies
+  # a public URL to the clipboard.
+  #
+  # NOTE: The screenshot may be still uploading via Dropbox.app after this
+  # method returns.
+  #
+  # Returns a String.
+  def mv_last_screenshot
+    file = last_screenshot
+
+    new_file = generate_new_filename(file)
+
+    touch(new_file)
+
+    # 30 secs
+    found = 60.times do |i|
+      break :found if File.exist?(new_file)
+      log { "#{new_file} doesnt exist yet, napping" }
+      sleep 0.5
+    end
+
+    unless found == :found
+      abort "Dropbox.app did not sync #{new_file}, aborting!"
+    end
+
+    url(new_file, method: :create).tap do |url|
+      copy(url)
+      notify(url)
+
+      FileUtils.mv(file, new_file) or abort "Coudln't move #{file} to #{new_file}"
+    end
   end
 
   # Generates a launchd.plist to run `shotty mv-last-screenshot` any time a
@@ -390,9 +428,32 @@ module Shotty
     end
   end
 
+  # Internal: Uploads a 0-byte file to Dropbox.
+  #
+  # file - Resolved file
+  #
+  # Returns a String or nil.
+  def dropbox_touch_file(file)
+    url  = "https://content.dropboxapi.com/2/files/upload"
+    args = {
+      "Content-Type"    => "application/octet-stream",
+      "Dropbox-API-Arg" => JSON.generate(
+        path:       file,
+        mode:       "add",
+        autorename: false,
+        mute:       true
+      ),
+    }
+
+    dropbox_post_json(url, payload: "", headers: args) do |json|
+      json["path_display"]
+    end
+  end
+
   # Internal: Resolves the path used for API requests for the given file.
   #
-  # file - Path to file
+  # file              - Path to file
+  # validate_presence - If true, validates presence of the file locally
   #
   # The API expects files where the Dropbox directory is the root.
   #
@@ -405,14 +466,16 @@ module Shotty
   #   - the file is not under `~/Dropbox`
   #
   # Returns a String.
-  def dropbox_resolve_file(file)
+  def dropbox_resolve_file(file, validate_presence: true)
     file = File.expand_path(file)
 
-    abort "#{file} does not exist" unless File.exist? file
+    if validate_presence
+      abort "#{file} does not exist" unless File.exist? file
 
-    file = File.realpath(file)
+      file = File.realpath(file)
 
-    abort "#{file} is a directory" if File.directory? file
+      abort "#{file} is a directory" if File.directory? file
+    end
 
     regex = Regexp.escape(Shotty::DROPBOX)
 
@@ -467,6 +530,21 @@ module Shotty
     `#{command}`
   end
 
+  # Internal: Generates a new filename for the screenshot based on the current
+  # time.
+  #
+  # file - String file
+  #
+  # Returns a String.
+  def generate_new_filename(file)
+    now          = Time.now
+    subdirectory = now.strftime("%Y-%m")
+    timestamp    = now.strftime("%F %H.%M.%S")
+    new_file     = "Screenshot #{timestamp}.#{File.extname(file).slice(1..-1)}"
+
+    File.join(config["screenshot_directory"], subdirectory, new_file)
+  end
+
   # Internal: Copies the given string to the clipboard using `pbcopy`.
   #
   # str - String
@@ -500,12 +578,11 @@ if $0 == __FILE__
   when "config-file"
     puts Shotty::CONFIG_FILE
   when "create-url", "get-url", "url"
-    method  = :create if command == "create-url"
-    method  = :find   if command == "get-url"
-    retries = method == :find ? 0 : 3
-    file    = ARGV.shift or abort "No file specified"
+    method = :create if command == "create-url"
+    method = :find   if command == "get-url"
+    file   = ARGV.shift or abort "No file specified"
 
-    puts Shotty.url(file, method: method, retries: retries)
+    puts Shotty.url(file, method: method)
   when "dropbox-status"
     puts (running = Shotty.dropbox_running?) ? "on" : "off"
 
@@ -517,17 +594,7 @@ if $0 == __FILE__
   when "mv-last-screenshot"
     abort "Dropbox is not running" unless Shotty.dropbox_running?
 
-    file     = Shotty.last_screenshot
-    new_file = Shotty.mv(file)
-
-    sleep 2 # Let Dropbox.app try uploading
-
-    url = Shotty.url(new_file, method: :create, retries: 5)
-
-    Shotty.copy(url)
-    Shotty.notify(url)
-
-    puts url
+    puts Shotty.mv_last_screenshot
   when "plist"
     puts Shotty.plist
   when "plist-file"
