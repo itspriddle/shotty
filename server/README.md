@@ -38,7 +38,7 @@ be set via shell profile (or Heroku config).
 ## Deploying to Heroku
 
 Since the server application is in a subdirectory of the main `shotty`
-project, `git subtree` us used push just the subdirectory.
+project, `git subtree` is used to push just the subdirectory.
 
 `bin/deploy` provides this functionality. Run it from any branch and it will
 be force pushed to master on Heroku.
