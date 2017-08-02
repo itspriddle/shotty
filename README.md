@@ -117,14 +117,18 @@ rm ~/Library/LaunchAgents/net.nevercraft.dropbox-screenshots.plist
 The following options are available:
 
 * `token` **REQUIRED**: Dropbox API OAuth2 access token.
+* `dropbox_root` _OPTIONAL_: Root Dropbox directory, by default `~/Dropbox`.
+  Useful if you have personal and business Dropbox folders on the same
+  machine.
 * `screenshot_directory` _OPTIONAL_: Directory to store screenshots in, by
-  default `~/Dropbox/Shotty`. This must be a subdirectory of `~/Dropbox`.
+  default `~/Dropbox/Shotty`. This must be a subdirectory of `dropbox_root`.
 
 Full example configuration file:
 
 ```
 {
-  "token": "MY-REDACTED-TOKEN",
+  "token":                "MY-REDACTED-TOKEN",
+  "dropbox_root":         "/Users/priddle/Dropbox (Personal)",
   "screenshot_directory": "/Users/priddle/Dropbox/Shotty"
 }
 ```
