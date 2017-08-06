@@ -59,14 +59,19 @@
 #     token - REQUIRED
 #       Dropbox API OAuth2 access token.
 #
+#     dropbox_root - OPTIONAL
+#       Root Dropbox directory, by default `~/Dropbox`. Useful if you have
+#       personal and business Dropbox folders on the same machine.
+#
 #     screenshot_directory - OPTIONAL
 #       Directory to store screenshots in, by default `~/Dropbox/Shotty`. This
-#       must be a subdirectory of `~/Dropbox`.
+#       must be a subdirectory of `dropbox_root`.
 #
 #   Full example configuration file:
 #
 #     {
 #       "token":                "TOKEN",
+#       "dropbox_root":         "/Users/priddle/Dropbox (Personal)",
 #       "screenshot_directory": "/Users/priddle/Dropbox/Shotty"
 #     }
 #
@@ -137,10 +142,10 @@ module Shotty
   # Returns a String.
   DESKTOP = File.expand_path("~/Desktop")
 
-  # Path to Dropbox.
+  # Default path to Dropbox.
   #
   # Returns a String.
-  DROPBOX = File.realpath(File.expand_path("~/Dropbox"))
+  DROPBOX = "~/Dropbox"
 
   # Raised when the Dropbox API returns an error.
   class APIError < StandardError; end
@@ -272,26 +277,44 @@ module Shotty
   #
   # Returns a Hash.
   def config
-    @config ||= JSON.parse(File.read(CONFIG_FILE)).tap do |hash|
+    @config ||= parse_config_file.tap do |hash|
       hash.fetch("token") # Fail if no API token found
 
-      hash["screenshot_directory"] ||= "#{Shotty::DROPBOX}/Shotty"
+      hash["dropbox_root"] ||= Shotty::DROPBOX
 
-      unless hash["screenshot_directory"].match Regexp.escape(Shotty::DROPBOX)
+      hash["screenshot_directory"] ||= "#{hash["dropbox_root"]}/Shotty"
+
+      begin
+        %w(dropbox_root screenshot_directory).each do |key|
+          hash[key] = File.realpath(File.expand_path(hash[key]))
+        end
+      rescue Errno::ENOENT
+        abort "#{key} #{hash[key]} does not exist"
+      end
+
+      unless hash["screenshot_directory"].match Regexp.escape(hash["dropbox_root"])
         abort "#{CONFIG_FILE} specifies an invalid screenshot_directory.\n\n" \
-          "#{hash["screenshot_directory"]} must be a subdirectory of #{Shotty::DROPBOX}"
+          "#{hash["screenshot_directory"]} must be a subdirectory of #{hash["dropbox_root"]}"
       end
     end
+  rescue KeyError => e
+    key = e.message.sub(/\Akey not found: /, "")
+
+    abort "#{CONFIG_FILE} is missing required key, #{key}"
+  end
+
+  # Internal: Reads the configuration file. Aborts if it is missing, can't be
+  # read, or is invalid JSON.
+  #
+  # Returns a Hash.
+  def parse_config_file
+    JSON.parse(File.read(CONFIG_FILE))
   rescue Errno::ENOENT
     abort "#{CONFIG_FILE} does not exist"
   rescue Errno::EACCES
     abort "#{CONFIG_FILE} can't be read"
   rescue JSON::ParserError
     abort "#{CONFIG_FILE} is not valid JSON"
-  rescue KeyError => e
-    key = e.message.sub(/\Akey not found: /, "")
-
-    abort "#{CONFIG_FILE} is missing required key, #{key}"
   end
 
   # Internal: Send a POST request to the given Dropbox API URL.
@@ -414,9 +437,9 @@ module Shotty
 
     abort "#{file} is a directory" if File.directory? file
 
-    regex = Regexp.escape(Shotty::DROPBOX)
+    regex = Regexp.escape(config["dropbox_root"])
 
-    abort "#{file} is not under #{Shotty::DROPBOX}" unless file.match(regex)
+    abort "#{file} is not under #{config["dropbox_root"]}" unless file.match(regex)
 
     file.sub(/\A#{regex}/, "")
   end
