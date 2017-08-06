@@ -43,7 +43,7 @@ Check that it works:
 shotty -v
 ```
 
-You should see output like "Shotty v0.0.1"
+You should see output like "Shotty v0.1.0"
 
 ## Authorization
 
