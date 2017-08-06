@@ -115,7 +115,7 @@ module Shotty
   # shotty version.
   #
   # Returns a String.
-  VERSION = "0.0.2"
+  VERSION = "0.1.0"
 
   # URL used to obtain an OAuth token from Dropbox.
   #
