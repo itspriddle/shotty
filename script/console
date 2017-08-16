@@ -7,7 +7,7 @@ ARGV.clear
 def reload!
   Object.send(:remove_const, :Shotty) if defined? Shotty
 
-  load File.expand_path("../shotty", __FILE__)
+  load File.expand_path("../../bin/shotty", __FILE__)
 
   Shotty.instance_eval do
     def abort(message)
