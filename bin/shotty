@@ -1,4 +1,4 @@
-#!/usr/bin/ruby --disable=gems
+#!/usr/bin/ruby --disable=gems --disable=rubyopt
 # Usage: shotty [COMMAND] [ARGS]
 #
 # COMMANDS
