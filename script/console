@@ -11,7 +11,7 @@ def reload!
 
   Shotty.instance_eval do
     def abort(message)
-      raise message
+      raise "Error: #{message}"
     end
   end
 end
