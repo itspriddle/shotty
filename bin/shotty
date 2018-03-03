@@ -169,7 +169,8 @@ module Shotty
   #
   # Returns a String.
   def url(file, method: nil, retries: 0)
-    file = dropbox_resolve_file(file)
+    exists_locally = File.exist?(File.expand_path(file))
+    file           = dropbox_resolve_file(file)
 
     begin
       if method
@@ -185,7 +186,7 @@ module Shotty
         abort "Couldn't find URL for #{file}"
       end
     rescue APIError => e
-      if e.is_a?(NotFoundError) && dropbox_running? && (retries -= 1) > 0
+      if e.is_a?(NotFoundError) && exists_locally && dropbox_running? && (retries -= 1) > 0
         log { "Trying again after a quick nap" }
 
         sleep 2
