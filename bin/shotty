@@ -284,12 +284,12 @@ module Shotty
 
       hash["screenshot_directory"] ||= "#{hash["dropbox_root"]}/Shotty"
 
-      begin
-        %w(dropbox_root screenshot_directory).each do |key|
+      %w(dropbox_root screenshot_directory).each do |key|
+        begin
           hash[key] = File.realpath(File.expand_path(hash[key]))
+        rescue Errno::ENOENT
+          abort "#{key} #{hash[key]} does not exist"
         end
-      rescue Errno::ENOENT
-        abort "#{key} #{hash[key]} does not exist"
       end
 
       unless hash["screenshot_directory"].match Regexp.escape(hash["dropbox_root"])
