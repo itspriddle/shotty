@@ -432,26 +432,9 @@ module Shotty
   #   ~/Dropbox/Hi.png          - /Hi.png
   #   ~/Dropbox/Apps/Foo/Hi.png - /Apps/Foo/Hi.png
   #
-  # Aborts if:
-  #   - the file does not exist
-  #   - the file is a directory
-  #   - the file is not under `~/Dropbox`
-  #
   # Returns a String.
   def dropbox_resolve_file(file)
-    file = File.expand_path(file)
-
-    abort "#{file} does not exist" unless File.exist? file
-
-    file = File.realpath(file)
-
-    abort "#{file} is a directory" if File.directory? file
-
-    regex = Regexp.escape(config["dropbox_root"])
-
-    abort "#{file} is not under #{config["dropbox_root"]}" unless file.match(regex)
-
-    file.sub(/\A#{regex}/, "")
+    File.expand_path(file).sub(/\A#{Regexp.escape(config["dropbox_root"])}/, "")
   end
 
   # Internal: Check if Dropbox.app is running.
