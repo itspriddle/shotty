@@ -505,6 +505,15 @@ module Shotty
   def log
     STDERR.puts "DEBUG: #{yield}" if ENV["DEBUG"] == "1"
   end
+
+  # Internal: Aborts with the given message, prefixed with "Error: ".
+  #
+  # str - Strng
+  #
+  # Returns nothing.
+  def abort(str)
+    ::Kernel.abort "Error: #{str}"
+  end
 end
 
 # Away we go!
@@ -514,7 +523,7 @@ if $0 == __FILE__
     exec "open #{Shotty::AUTHORIZATION_URL}"
   when "config"
     if key = ARGV.first
-      val = Shotty.config[key] or abort "Config '#{key}' not found"
+      val = Shotty.config[key] or Shotty.abort "Config '#{key}' not found"
 
       puts val
     else
@@ -526,7 +535,7 @@ if $0 == __FILE__
     method  = :create if command == "create-url"
     method  = :find   if command == "get-url"
     retries = method == :find ? 0 : 3
-    file    = ARGV.shift or abort "No file specified"
+    file    = ARGV.shift or Shotty.abort "No file specified"
 
     puts Shotty.url(file, method: method, retries: retries)
   when "dropbox-status"
@@ -534,11 +543,11 @@ if $0 == __FILE__
 
     exit running
   when "mv"
-    file = ARGV.shift or abort "No file specified"
+    file = ARGV.shift or Shotty.abort "No file specified"
 
     puts Shotty.mv(file)
   when "mv-last-screenshot"
-    abort "Dropbox is not running" unless Shotty.dropbox_running?
+    Shotty.abort "Dropbox is not running" unless Shotty.dropbox_running?
 
     file     = Shotty.last_screenshot
     new_file = Shotty.mv(file)
