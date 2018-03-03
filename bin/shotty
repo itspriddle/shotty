@@ -147,6 +147,11 @@ module Shotty
   # Returns a String.
   DROPBOX = "~/Dropbox"
 
+  # Timestamp when this script was executed
+  #
+  # Returns a Time.
+  NOW = Time.now
+
   # Raised when the Dropbox API returns an error.
   class APIError < StandardError; end
 
@@ -206,11 +211,9 @@ module Shotty
   def mv(file)
     abort "#{file} does not exist" unless File.exist? file
 
-    now          = Time.now
-    subdirectory = now.strftime("%Y-%m")
-    timestamp    = now.strftime("%F %H.%M.%S")
+    timestamp    = NOW.strftime("%F %H.%M.%S")
     new_file     = "Screenshot #{timestamp}.#{File.extname(file).slice(1..-1)}"
-    new_path     = File.join(config["screenshot_directory"], subdirectory, new_file)
+    new_path     = File.join(destination_directory, new_file)
     new_dir      = File.dirname(new_path)
 
     FileUtils.mkdir_p(new_dir) or abort "Couldn't create #{new_dir}"
@@ -271,6 +274,13 @@ module Shotty
     end
 
     exit valid
+  end
+
+  # Internal: Destination directory for new files.
+  #
+  # Returns a String.
+  def destination_directory
+    File.join(config["screenshot_directory"], NOW.strftime("%Y-%m"))
   end
 
   # Internal: shotty configuration.
