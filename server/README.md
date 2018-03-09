@@ -15,11 +15,14 @@ the authentication process.
 The authorization flow is as follows:
 
 1. The user visits `/authorize`.
-2. This application redirects them to Dropbox.
+2. This application redirects them to Dropbox. A `state` param is sent that
+   will be verified when the user returns to this application.
 3. Dropbox asks the user to accept or deny `shotty` access to their account.
 4. If the user accepts access, they are redirected to this application at
-   `/callback?code=CODE`. If the user denies access (or any other error
-   occurs), they are redirected to `/callback?error=ERROR`
+   `/callback?code=CODE&state=STATE`. If the `state` param does not match the
+   one that was sent to Dropbox, the request is denied and a 404 page is
+   displayed. If the user denies access (or any other error occurs), they are
+   redirected to `/callback?error=ERROR`
 5. If the user successfully authorized `shotty`, a shell command is displayed
    to write a JSON file with their OAuth token. Otherwise an error is
    displayed.
@@ -31,6 +34,7 @@ The following environment variables must be set for the application to run:
 `DROPBOX_APP_KEY`: This is your public App key from Dropbox
 `DROPBOX_APP_SECRET`: This is your private App secret from Dropbox
 `SHOTTY_CALLBACK_URL`: This is the URL to this application's `/callback` route
+`SHOTTY_SESSION_SECRET`: Random string used to verify integrity of sessions
 
 In development, these can be set in a `.env` file. In production they should
 be set via shell profile (or Heroku config).
