@@ -451,11 +451,13 @@ module Shotty
   #
   # Returns a String.
   def last_screenshot
-    pattern = "#{DESKTOP}/Screen Shot*.png"
+    mtime = nil
 
-    file = Dir[pattern].max_by { |file| File.ctime(file) }
+    file = Dir["#{DESKTOP}/Screen Shot*.png"].max_by do |file|
+      mtime = File.mtime(file)
+    end
 
-    if file && ((Time.now - File.ctime(file)) < 30)
+    if file && ((NOW - mtime) < 30)
       file
     else
       abort "No screenshot found"
