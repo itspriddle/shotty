@@ -64,6 +64,10 @@ def get_token(code)
   body["access_token"]
 end
 
+error 404 do
+  erb :"404", layout: :layout
+end
+
 get "/" do
   erb :index, layout: :layout
 end
