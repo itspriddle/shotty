@@ -37,6 +37,10 @@
 #   shotty plist-file
 #     Shows the path to the shotty launchd plist file.
 #
+#   shotty upload <file>
+#     Uploads the given file to Dropbox via the Dropbox API. A successful
+#     upload's Dropbox shared link is printed.
+#
 #   shotty url <file>
 #     Gets or creates a Dropbox shared link for the given file. This is
 #     useful when it is not known ahead of time whether a file already has a
@@ -185,6 +189,29 @@ module Shotty
 
       abort e.message
     end
+  end
+
+  # Uploads the given file Dropbox using the Dropbox API.
+  #
+  # file - String file.
+  #
+  # Aborts if the file does not exist on disk.
+  #
+  # Returns a String.
+  def upload(file)
+    file = File.expand_path(file)
+
+    abort "#{file} does not exist!" unless File.exist?(file)
+
+    dest = dropbox_resolve_file(File.join(destination_directory, File.basename(file)))
+
+    if remote_file = dropbox_upload_file(file, dest)
+      url(remote_file, method: :create, retries: 0)
+    else
+      abort "Couldn't upload file #{file}"
+    end
+  rescue APIError => e
+    abort e.message
   end
 
   # Generates a launchd.plist to run `shotty mv-last-screenshot` any time a
@@ -377,6 +404,8 @@ module Shotty
         log { "  ERROR (code: #{summary})" }
 
         case summary
+        when %r{path/conflict/file}
+          raise APIError, "The specified file already exists remotely."
         when /access_denied/
           raise APIError, "Access to the request path is forbidden."
         when /invalid_access_token/
@@ -419,6 +448,29 @@ module Shotty
 
     dropbox_post_json(url, payload: payload) do |json|
       json["url"]
+    end
+  end
+
+  # Internal: Uploads the given file to Dropbox.
+  #
+  # file - Local filename
+  # dest - Resolved destination path
+  #
+  # Returns String or nil.
+  def dropbox_upload_file(file, dest)
+    url = "https://content.dropboxapi.com/2/files/upload"
+
+    headers = {
+      "Content-Type"    => "application/octet-stream",
+      "Dropbox-API-Arg" => JSON.generate(
+        path:       dest,
+        mode:       "add",
+        autorename: false
+      )
+    }
+
+    dropbox_post_json(url, headers: headers, payload: File.read(file)) do |json|
+      json["path_display"]
     end
   end
 
@@ -554,6 +606,10 @@ if $0 == __FILE__
     puts Shotty.plist
   when "plist-file"
     puts Shotty::LAUNCHD_PLIST
+  when "upload"
+    file = ARGV.shift or Shotty.abort "No file specified"
+
+    puts Shotty.upload(file)
   when "version", "-v", "--version"
     puts "Shotty v#{Shotty::VERSION} by Joshua Priddle <jpriddle@me.com>"
     puts "Released under the MIT license."
