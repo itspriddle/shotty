@@ -24,9 +24,6 @@
 #   shotty get-url <file>
 #     Gets an existing Dropbox shared link for the specified file.
 #
-#   shotty mv <file>
-#     Moves a file to the shotty screenshot directory.
-#
 #   shotty mv-last-screenshot
 #     If a screenshot was created on the Desktop within the last 30 seconds,
 #     moves it to the screenshot directory. Outputs the Dropbox URL and
@@ -79,9 +76,6 @@
 # EXAMPLES
 #   shotty url ~/Dropbox/SomeFile.png | open
 #     Open the Dropbox URL for a file in the default web browser.
-#
-#   shotty mv ~/Test.png
-#     Moves an arbitrary file.
 #
 #   shotty plist > $(shotty plist-file)
 #     Install shotty plist.
@@ -193,31 +187,6 @@ module Shotty
     end
   end
 
-  # Moves the given file into the shotty screenshot directory. The destination
-  # file will be placed in a subdirectory named after the year/month and have
-  # a 24-hour timestamp, eg:
-  #
-  #   "~/Dropbox/Shotty/2017-02/Screenshot 2017-02-18 12.42.49.png"
-  #
-  # file - String file
-  #
-  # Aborts if the file could not be moved.
-  #
-  # Returns a String.
-  def mv(file)
-    abort "#{file} does not exist" unless File.exist? file
-
-    timestamp    = Time.now.strftime("%F %H.%M.%S")
-    new_file     = "Screenshot #{timestamp}.#{File.extname(file).slice(1..-1)}"
-    new_path     = File.join(destination_directory, new_file)
-    new_dir      = File.dirname(new_path)
-
-    FileUtils.mkdir_p(new_dir) or abort "Couldn't create #{new_dir}"
-    FileUtils.mv(file, new_path) or abort "Coudln't move #{file} to #{new_path}"
-
-    new_path
-  end
-
   # Generates a launchd.plist to run `shotty mv-last-screenshot` any time a
   # new screenshot is saved to the Desktop.
   #
@@ -321,6 +290,31 @@ module Shotty
     abort "#{CONFIG_FILE} can't be read"
   rescue JSON::ParserError
     abort "#{CONFIG_FILE} is not valid JSON"
+  end
+
+  # Internal: Moves the given file into the shotty screenshot directory. The
+  # destination file will be placed in a subdirectory named after the
+  # year/month and have a 24-hour timestamp, eg:
+  #
+  #   "~/Dropbox/Shotty/2017-02/Screenshot 2017-02-18 12.42.49.png"
+  #
+  # file - String file
+  #
+  # Aborts if the file could not be moved.
+  #
+  # Returns a String.
+  def mv(file)
+    abort "#{file} does not exist" unless File.exist? file
+
+    timestamp    = Time.now.strftime("%F %H.%M.%S")
+    new_file     = "Screenshot #{timestamp}.#{File.extname(file).slice(1..-1)}"
+    new_path     = File.join(destination_directory, new_file)
+    new_dir      = File.dirname(new_path)
+
+    FileUtils.mkdir_p(new_dir) or abort "Couldn't create #{new_dir}"
+    FileUtils.mv(file, new_path) or abort "Coudln't move #{file} to #{new_path}"
+
+    new_path
   end
 
   # Internal: Send a POST request to the given Dropbox API URL.
@@ -533,10 +527,6 @@ if $0 == __FILE__
     puts (running = Shotty.dropbox_running?) ? "on" : "off"
 
     exit running
-  when "mv"
-    file = ARGV.shift or Shotty.abort "No file specified"
-
-    puts Shotty.mv(file)
   when "mv-last-screenshot"
     Shotty.abort "Dropbox is not running" unless Shotty.dropbox_running?
 
