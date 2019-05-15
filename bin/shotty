@@ -589,14 +589,17 @@ if $0 == __FILE__
 
     exit running
   when "mv-last-screenshot"
-    Shotty.abort "Dropbox is not running" unless Shotty.dropbox_running?
+    if Shotty.dropbox_running?
+      file     = Shotty.last_screenshot
+      new_file = Shotty.mv(file)
 
-    file     = Shotty.last_screenshot
-    new_file = Shotty.mv(file)
+      sleep 2 # Let Dropbox.app try uploading
 
-    sleep 2 # Let Dropbox.app try uploading
-
-    url = Shotty.url(new_file, method: :create, retries: 5)
+      url = Shotty.url(new_file, method: :create, retries: 5)
+    else
+      file = Shotty.last_screenshot
+      url  = Shotty.upload(file)
+    end
 
     Shotty.copy(url)
     Shotty.notify(url)
