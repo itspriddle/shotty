@@ -46,6 +46,9 @@
 #     useful when it is not known ahead of time whether a file already has a
 #     shared link.
 #
+#   shotty usage
+#     Prints space usage information for the current Dropbox account.
+#
 #   shotty version, shotty -v, shotty --version
 #     Show shotty version.
 #
@@ -212,6 +215,19 @@ module Shotty
     end
   rescue APIError => e
     abort e.message
+  end
+
+  # Prints Dropbox account usage info.
+  #
+  # Returns nothing.
+  def account_usage
+    usage = Shotty.dropbox_account_usage
+
+    puts "Dropbox Space Usage"
+    puts
+    puts "  - Used: #{usage[:used]} GB (#{usage[:used_percent]}%)"
+    puts "  - Free: #{usage[:free]} GB (#{usage[:free_percent]}%)"
+    puts "  - Max:  #{usage[:max]} GB"
   end
 
   # Generates a launchd.plist to run `shotty mv-last-screenshot` any time a
@@ -488,6 +504,33 @@ module Shotty
     File.expand_path(file).sub(/\A#{Regexp.escape(config["dropbox_root"])}/, "")
   end
 
+  # Internal: Fetches usage stats for the current Dropbox account.
+  #
+  # Returns a Hash.
+  def dropbox_account_usage
+    url = "https://api.dropboxapi.com/2/users/get_space_usage"
+
+    format = ->(value) { sprintf("%.2f", value) }
+    to_gb  = ->(value) { format[value.to_f / 1024 / 1024 / 1024] }
+
+    # API expects a body of "null"
+    dropbox_post_json(url, payload: "null") do |json|
+      used         = json["used"]
+      max          = json.dig("allocation", "allocated")
+      free         = max - used
+      used_percent = format[(used.to_f / max.to_f) * 100]
+      free_percent = format[100.0 - used_percent.to_f]
+
+      {
+        max:          to_gb[max],
+        used:         to_gb[used],
+        used_percent: used_percent,
+        free:         to_gb[free],
+        free_percent: free_percent,
+      }
+    end
+  end
+
   # Internal: Check if Dropbox.app is running.
   #
   # Returns a boolean.
@@ -613,6 +656,8 @@ if $0 == __FILE__
     file = ARGV.shift or Shotty.abort "No file specified"
 
     puts Shotty.upload(file)
+  when "usage"
+    Shotty.account_usage
   when "version", "-v", "--version"
     puts "Shotty v#{Shotty::VERSION} by Joshua Priddle <jpriddle@me.com>"
     puts "Released under the MIT license."
