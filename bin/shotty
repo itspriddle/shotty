@@ -550,7 +550,7 @@ module Shotty
       mtime = File.mtime(file)
     end
 
-    if file && ((Time.now - mtime) < 30)
+    if file && ((Time.now - mtime) < 60)
       file
     else
       abort "No screenshot found"
