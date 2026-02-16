@@ -1,0 +1,29 @@
+[package]
+name = "shotty"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+arboard = "3"
+base64 = "0.22"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "linux-native"] }
+open = "5"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+url = "2"
+mime_guess = "2"
+urlencoding = "2"
+rpassword = "7"
+
+[dev-dependencies]
+tempfile = "3"
